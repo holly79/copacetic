@@ -76,6 +76,77 @@ func TestStateFileExistsUsesStatOnly(t *testing.T) {
 	}
 }
 
+func TestStatePathExistsAndExecutable(t *testing.T) {
+	tests := []struct {
+		name       string
+		stat       *fstypes.Stat
+		statErr    error
+		wantExists bool
+		wantExec   bool
+		wantErr    string
+	}{
+		{
+			name:       "executable symlink",
+			stat:       &fstypes.Stat{Mode: uint32(os.ModeSymlink | 0o777)},
+			wantExists: true,
+			wantExec:   true,
+		},
+		{
+			name:       "non-executable file",
+			stat:       &fstypes.Stat{Mode: 0o644},
+			wantExists: true,
+		},
+		{
+			name:    "missing",
+			stat:    &fstypes.Stat{},
+			statErr: fs.ErrNotExist,
+		},
+		{
+			name:    "stat failure",
+			stat:    &fstypes.Stat{},
+			statErr: errors.New("permission denied"),
+			wantErr: "stating",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			ref := &mocks.MockReference{}
+			ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: "/bin/sh"}).
+				Return(test.stat, test.statErr).Once()
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+
+			state := llb.Scratch()
+			exists, err := statePathExists(t.Context(), client, &state, "/bin/sh")
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.wantExists, exists)
+
+			client = &mocks.MockGWClient{}
+			ref = &mocks.MockReference{}
+			ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: "/bin/sh"}).
+				Return(test.stat, test.statErr).Once()
+			result = gwclient.NewResult()
+			result.SetRef(ref)
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+
+			executable, err := statePathExecutable(t.Context(), client, &state, "/bin/sh")
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.wantExec, executable)
+		})
+	}
+}
+
 func TestExternalDPKGPatchedStateAvoidsNestedMergeGraph(t *testing.T) {
 	current := llb.Scratch().
 		File(llb.Mkdir(dpkgLibPath, 0o755, llb.WithParents(true))).

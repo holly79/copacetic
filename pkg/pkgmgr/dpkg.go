@@ -26,6 +26,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
+	fstypes "github.com/tonistiigi/fsutil/types"
 )
 
 //go:embed scripts/apt_get_download.sh
@@ -288,38 +289,62 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // this separate from manifest extraction prevents an existence check from
 // reading an arbitrarily large, untrusted manifest into the client process.
 func stateFileExists(ctx context.Context, client gwclient.Client, state *llb.State, path string) (bool, error) {
+	stat, err := statePathStat(ctx, client, state, path)
+	if err != nil {
+		return false, err
+	}
+	if stat == nil {
+		return false, nil
+	}
+	if !fs.FileMode(stat.Mode).IsRegular() {
+		return false, fmt.Errorf("%s exists but is not a regular file", path)
+	}
+	return true, nil
+}
+
+func statePathExists(ctx context.Context, client gwclient.Client, state *llb.State, path string) (bool, error) {
+	stat, err := statePathStat(ctx, client, state, path)
+	return stat != nil, err
+}
+
+func statePathExecutable(ctx context.Context, client gwclient.Client, state *llb.State, path string) (bool, error) {
+	stat, err := statePathStat(ctx, client, state, path)
+	if err != nil || stat == nil {
+		return false, err
+	}
+	return fs.FileMode(stat.Mode).Perm()&0o111 != 0, nil
+}
+
+func statePathStat(ctx context.Context, client gwclient.Client, state *llb.State, path string) (*fstypes.Stat, error) {
 	definition, err := state.Marshal(ctx)
 	if err != nil {
-		return false, fmt.Errorf("marshaling state: %w", err)
+		return nil, fmt.Errorf("marshaling state: %w", err)
 	}
 	result, err := client.Solve(ctx, gwclient.SolveRequest{
 		Evaluate:   true,
 		Definition: definition.ToPB(),
 	})
 	if err != nil {
-		return false, fmt.Errorf("solving state: %w", err)
+		return nil, fmt.Errorf("solving state: %w", err)
 	}
 	reference, err := result.SingleRef()
 	if err != nil {
-		return false, fmt.Errorf("resolving state reference: %w", err)
+		return nil, fmt.Errorf("resolving state reference: %w", err)
 	}
 	if reference == nil {
-		return false, fmt.Errorf("resolving state reference: BuildKit returned no reference")
+		return nil, fmt.Errorf("resolving state reference: BuildKit returned no reference")
 	}
 	stat, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path})
 	if err != nil {
 		if isStateFileNotFound(err, path) {
-			return false, nil
+			return nil, nil
 		}
-		return false, fmt.Errorf("stating %s: %w", path, err)
+		return nil, fmt.Errorf("stating %s: %w", path, err)
 	}
 	if stat == nil {
-		return false, fmt.Errorf("stating %s: BuildKit returned no file metadata", path)
+		return nil, fmt.Errorf("stating %s: BuildKit returned no file metadata", path)
 	}
-	if !fs.FileMode(stat.Mode).IsRegular() {
-		return false, fmt.Errorf("%s exists but is not a regular file", path)
-	}
-	return true, nil
+	return stat, nil
 }
 
 // isStateFileNotFound only inspects an error produced by StatFile, so path

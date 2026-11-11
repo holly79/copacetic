@@ -105,14 +105,16 @@ These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/t
 
 ### APK (Alpine and Wolfi)
 
-Alpine and Wolfi use the target image's existing `apk` and `/bin/sh` to patch
-packages from its configured repositories using its signing keys. Copa does
-not use an external APK tooling image in this mode. Images without these
-executables are not supported.
-
-Wolfi retains its own OS identity in scanner manifests; its `20230201` version
-is not treated as an Alpine release. Wolfi packages must not be mixed with
-Alpine packages or repositories.
+Alpine and Wolfi use APK directly in the target image when its `apk` executable
+is present. If it is absent, Copa uses matching external tooling:
+`ghcr.io/project-copacetic/copacetic/alpine:<major.minor>` for Alpine and
+`ghcr.io/project-copacetic/copacetic/chainguard/wolfi-base:latest` for Wolfi,
+falling back to the corresponding upstream image if the mirror is unavailable.
+The external tooling operates on the target root filesystem and uses its APK
+database, repositories, and signing keys. The target must retain
+`/lib/apk/db/installed`, `/etc/apk/repositories`, `/etc/apk/keys`, and an
+executable `/bin/sh` for package scripts. Wolfi retains its own OS identity in
+scanner manifests; its `20230201` version is not treated as an Alpine release.
 
 ### Python
 

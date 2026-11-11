@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/patch"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/test/testenv"
 )
@@ -144,6 +146,89 @@ func TestPatchWolfiWithAPK(t *testing.T) {
 		inspector.AssertFileExists(t, "/lib/apk/db/installed")
 	})
 	require.NoError(t, err)
+}
+
+func TestPatchAPKImagesWithoutAPKExecutable(t *testing.T) {
+	t.Parallel()
+
+	if buildkitAddr == "" {
+		t.Skip("Skipping: no BuildKit address provided")
+	}
+
+	testCases := []struct {
+		name      string
+		image     string
+		osType    string
+		osVersion string
+	}{
+		{
+			name:      "Alpine",
+			image:     "docker.io/library/alpine:3.24",
+			osType:    "alpine",
+			osVersion: "3.24.0",
+		},
+		{
+			name:      "Wolfi",
+			image:     "cgr.dev/chainguard/wolfi-base:latest",
+			osType:    "wolfi",
+			osVersion: "20230201",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+
+			platform := &specs.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+
+			testEnv.RunTest(ctx, t, func(ctx context.Context, t *testing.T, c gwclient.Client) {
+				config, err := initBuildkitConfig(ctx, c, testCase.image, platform)
+				require.NoError(t, err)
+
+				config.ImageState = config.ImageState.Run(
+					llb.Shlex("rm -f /sbin/apk /usr/bin/apk"),
+					llb.WithCustomName("Removing target APK executable for external tooling test"),
+				).Root()
+
+				manager, err := pkgmgr.GetPackageManager(testCase.osType, testCase.osVersion, config, "")
+				require.NoError(t, err)
+
+				updates := testenv.CreateUpdateManifest(testCase.osType, testCase.osVersion, "amd64", []testenv.PackageUpdate{
+					{
+						Name:             "busybox",
+						InstalledVersion: "1.0-r0",
+						FixedVersion:     "1.0-r0",
+						VulnerabilityID:  "CVE-2099-TEST",
+					},
+				})
+				updated, _, err := manager.InstallUpdates(ctx, updates, false)
+				require.NoError(t, err)
+
+				definition, err := updated.Marshal(ctx)
+				require.NoError(t, err)
+				result, err := c.Solve(ctx, gwclient.SolveRequest{
+					Definition: definition.ToPB(),
+					Evaluate:   true,
+				})
+				require.NoError(t, err)
+				ref, err := result.SingleRef()
+				require.NoError(t, err)
+				require.NotNil(t, ref)
+
+				inspector, err := testenv.NewRefInspectorFromRef(ctx, ref)
+				require.NoError(t, err)
+				inspector.AssertFileExists(t, "/lib/apk/db/installed")
+				inspector.AssertFileNotExists(t, "/sbin/apk")
+				inspector.AssertFileNotExists(t, "/usr/bin/apk")
+			})
+		})
+	}
 }
 
 // TestPatchDebian tests Copa patching on Debian-based images.

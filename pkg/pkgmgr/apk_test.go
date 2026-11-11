@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,12 +16,65 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
+
+func TestAPKToolingImageNames(t *testing.T) {
+	tests := []struct {
+		name         string
+		osType       string
+		osVersion    string
+		wantCached   string
+		wantUpstream string
+		wantError    string
+	}{
+		{
+			name:         "Alpine uses matching minor release",
+			osType:       utils.OSTypeAlpine,
+			osVersion:    "3.24.4",
+			wantCached:   imageCachePrefix + "/alpine:3.24",
+			wantUpstream: "docker.io/library/alpine:3.24",
+		},
+		{
+			name:         "Wolfi uses Wolfi base",
+			osType:       utils.OSTypeWolfi,
+			osVersion:    "20230201",
+			wantCached:   imageCachePrefix + "/chainguard/wolfi-base:latest",
+			wantUpstream: "cgr.dev/chainguard/wolfi-base:latest",
+		},
+		{
+			name:      "invalid Alpine version",
+			osType:    utils.OSTypeAlpine,
+			osVersion: "3.24/extra",
+			wantError: "invalid Alpine version",
+		},
+		{
+			name:      "unsupported OS",
+			osType:    utils.OSTypeDebian,
+			osVersion: "12",
+			wantError: "external APK tooling is unsupported",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cached, upstream, err := apkToolingImageNames(test.osType, test.osVersion)
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.wantCached, cached)
+			assert.Equal(t, test.wantUpstream, upstream)
+		})
+	}
+}
 
 // TestApkReadResultsManifest tests the apkReadResultsManifest function.
 func TestIsValidAPKVersion(t *testing.T) {
@@ -308,6 +362,10 @@ func Test_InstallUpdates_APK(t *testing.T) {
 			mockResult.SetRef(mockRef)
 
 			mockGWClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+			mockRef.On("StatFile", mock.Anything, gwclient.StatRequest{Path: "/usr/bin/apk"}).
+				Return((*fstypes.Stat)(nil), fs.ErrNotExist)
+			mockRef.On("StatFile", mock.Anything, gwclient.StatRequest{Path: "/sbin/apk"}).
+				Return(&fstypes.Stat{Mode: 0o755}, nil)
 
 			if tt.mockSetup != nil {
 				tt.mockSetup(mockRef)

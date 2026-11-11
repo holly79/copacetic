@@ -86,6 +86,8 @@ func GetPackageManagerWithOptions(osType string, osVersion string, config *build
 		return &apkManager{
 			config:        config,
 			workingFolder: workingFolder,
+			osType:        canonicalOSType,
+			osVersion:     osVersion,
 		}, nil
 	case utils.OSTypeDebian, utils.OSTypeUbuntu:
 		return &dpkgManager{

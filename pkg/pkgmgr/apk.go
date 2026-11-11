@@ -19,6 +19,8 @@ import (
 type apkManager struct {
 	config        *buildkit.Config
 	workingFolder string
+	osType        string
+	osVersion     string
 }
 
 // Depending on go-apk-version lib for APK version comparison rules.
@@ -162,6 +164,14 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		imageStateCurrent = am.config.PatchedImageState
 	}
 
+	hasAPK, err := am.hasAPKExecutable(ctx, &imageStateCurrent)
+	if err != nil {
+		return nil, nil, fmt.Errorf("checking for APK in target image: %w", err)
+	}
+	if !hasAPK {
+		return am.upgradePackagesWithExternalAPK(ctx, &imageStateCurrent, updates, ignoreErrors)
+	}
+
 	apkUpdated := imageStateCurrent.Run(
 		llb.Shlex("apk update"),
 		llb.WithProxy(utils.GetProxy()),
@@ -189,7 +199,6 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 
 	var apkInstalled llb.State
 	var resultManifestBytes []byte
-	var err error
 	if updates != nil {
 		// Add all requested update packages
 		// This works around cases where some packages (for example, tiff) require other packages in it's dependency tree to be updated

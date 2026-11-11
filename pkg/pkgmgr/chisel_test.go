@@ -692,6 +692,7 @@ func runGitReleaseCloneScriptWithEnv(
 	command := exec.Command("sh", "-c", gitChiselReleaseCloneScript)
 	command.Dir = root
 	command.Env = append(os.Environ(),
+		"LC_ALL=C",
 		"RELEASE_DIR="+releaseDir,
 		"REVISION_FILE="+revisionFile,
 		"RELEASE_URL="+repository,
@@ -708,6 +709,7 @@ func runGitConfigTestCommand(t *testing.T, configFile string, args ...string) {
 	t.Helper()
 	commandArgs := append([]string{"config", "--file", configFile}, args...)
 	command := exec.Command("git", commandArgs...)
+	command.Env = append(os.Environ(), "LC_ALL=C")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "git config %v failed:\n%s", args, output)
 }
@@ -716,6 +718,7 @@ func runGitTestCommand(t *testing.T, repository string, args ...string) string {
 	t.Helper()
 	commandArgs := append([]string{"-C", repository}, args...)
 	command := exec.Command("git", commandArgs...)
+	command.Env = append(os.Environ(), "LC_ALL=C")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "git %v failed:\n%s", args, output)
 	return string(output)
